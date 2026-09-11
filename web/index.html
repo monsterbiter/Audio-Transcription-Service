@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>音频转写服务 - Audio Transcription Service</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+
+        h1 {
+            font-size: 24px;
+            color: #4a9eff;
+            margin-bottom: 10px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+            border-bottom: 2px solid #3a3a3a;
+        }
+
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            border: none;
+            background: transparent;
+            color: #999;
+            font-size: 14px;
+            transition: all 0.3s;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+        }
+
+        .tab:hover {
+            color: #e0e0e0;
+        }
+
+        .tab.active {
+            color: #4a9eff;
+            border-bottom-color: #4a9eff;
+        }
+
+        .upload-section {
+            background: #2a2a2a;
+            padding: 30px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        .upload-area {
+            border: 2px dashed #4a4a4a;
+            border-radius: 8px;
+            padding: 40px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .upload-area:hover {
+            border-color: #4a9eff;
+            background: #2f2f2f;
+        }
+
+        .upload-area.dragging {
+            border-color: #4a9eff;
+            background: #2f2f2f;
+        }
+
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        .upload-text {
+            color: #999;
+            font-size: 14px;
+        }
+
+        .upload-button {
+            background: #4a9eff;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-top: 20px;
+            transition: all 0.3s;
+        }
+
+        .upload-button:hover {
+            background: #3a8eef;
+        }
+
+        .file-list {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .file-list-header {
+            display: grid;
+            grid-template-columns: 40px 2fr 1fr 1fr 120px 100px;
+            gap: 15px;
+            padding: 15px;
+            background: #3a3a3a;
+            border-radius: 6px;
+            font-size: 13px;
+            color: #999;
+            margin-bottom: 10px;
+        }
+
+        .file-item {
+            display: grid;
+            grid-template-columns: 40px 2fr 1fr 1fr 120px 100px;
+            gap: 15px;
+            padding: 15px;
+            background: #2f2f2f;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            align-items: center;
+            transition: all 0.3s;
+        }
+
+        .file-item:hover {
+            background: #353535;
+        }
+
+        .file-icon {
+            font-size: 24px;
+            text-align: center;
+        }
+
+        .file-name {
+            font-size: 14px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .file-size {
+            font-size: 13px;
+            color: #999;
+        }
+
+        .status-badge {
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            text-align: center;
+            font-weight: 500;
+        }
+
+        .status-pending {
+            background: #4a4a4a;
+            color: #e0e0e0;
+        }
+
+        .status-transcribing {
+            background: #ff9800;
+            color: white;
+        }
+
+        .status-summarizing {
+            background: #2196f3;
+            color: white;
+        }
+
+        .status-done {
+            background: #4caf50;
+            color: white;
+        }
+
+        .status-failed {
+            background: #f44336;
+            color: white;
+        }
+
+        .progress-stages {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        .stage {
+            padding: 4px 8px;
+            border-radius: 3px;
+            background: #3a3a3a;
+            color: #666;
+        }
+
+        .stage.active {
+            background: #4a9eff;
+            color: white;
+        }
+
+        .stage.completed {
+            background: #4caf50;
+            color: white;
+        }
+
+        .actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .action-btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s;
+        }
+
+        .view-btn {
+            background: #4a9eff;
+            color: white;
+        }
+
+        .view-btn:hover {
+            background: #3a8eef;
+        }
+
+        .delete-btn {
+            background: #f44336;
+            color: white;
+        }
+
+        .delete-btn:hover {
+            background: #d32f2f;
+        }
+
+        .retry-btn {
+            background: #ff9800;
+            color: white;
+        }
+
+        .retry-btn:hover {
+            background: #e68900;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+
+        .empty-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #4a4a4a;
+            border-top-color: #4a9eff;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 30px;
+            max-width: 800px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .modal-title {
+            font-size: 20px;
+            color: #4a9eff;
+        }
+
+        .close-btn {
+            background: transparent;
+            border: none;
+            color: #999;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+        }
+
+        .close-btn:hover {
+            color: #e0e0e0;
+        }
+
+        .detail-section {
+            margin-bottom: 20px;
+        }
+
+        .detail-label {
+            color: #999;
+            font-size: 13px;
+            margin-bottom: 8px;
+        }
+
+        .detail-value {
+            color: #e0e0e0;
+            font-size: 14px;
+            line-height: 1.6;
+            background: #1f1f1f;
+            padding: 15px;
+            border-radius: 6px;
+        }
+
+        .summary-item {
+            margin-bottom: 15px;
+        }
+
+        .summary-title {
+            color: #4a9eff;
+            font-size: 14px;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .key-points {
+            list-style: none;
+        }
+
+        .key-points li {
+            padding-left: 20px;
+            position: relative;
+            margin-bottom: 8px;
+        }
+
+        .key-points li:before {
+            content: "•";
+            color: #4a9eff;
+            position: absolute;
+            left: 5px;
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .refresh-btn {
+            background: #4a9eff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            margin-bottom: 15px;
+        }
+
+        .refresh-btn:hover {
+            background: #3a8eef;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎙️ 音频转写服务</h1>
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('upload')">音频上传</button>
+                <button class="tab" onclick="switchTab('list')">音频列表</button>
+            </div>
+        </header>
+
+        <!-- Upload Section -->
+        <div id="uploadTab" class="upload-section">
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">📁</div>
+                <div class="upload-text">
+                    <p>拖拽音频文件到此处,或点击上传</p>
+                    <p style="font-size: 12px; margin-top: 10px;">支持格式: WAV, MP3, M4A, AAC (最大 50MB)</p>
+                </div>
+                <input type="file" id="fileInput" accept=".wav,.mp3,.m4a,.aac">
+                <button class="upload-button" onclick="document.getElementById('fileInput').click()">
+                    选择文件
+                </button>
+            </div>
+        </div>
+
+        <!-- List Section -->
+        <div id="listTab" class="file-list" style="display: none;">
+            <button class="refresh-btn" onclick="loadRecordings()">🔄 刷新列表</button>
+
+            <div class="file-list-header">
+                <div></div>
+                <div>文件名</div>
+                <div>大小</div>
+                <div>处理进度</div>
+                <div>状态</div>
+                <div>操作</div>
+            </div>
+
+            <div id="fileListContent">
+                <div class="empty-state">
+                    <div class="empty-icon">📭</div>
+                    <p>暂无音频文件</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div id="detailModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">音频详情</h2>
+                <button class="close-btn" onclick="closeModal()">&times;</button>
+            </div>
+            <div id="modalContent"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8080';
+        let currentPage = 1;
+        const pageSize = 20;
+
+        // Tab switching
+        function switchTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+
+            if (tab === 'upload') {
+                document.getElementById('uploadTab').style.display = 'block';
+                document.getElementById('listTab').style.display = 'none';
+            } else {
+                document.getElementById('uploadTab').style.display = 'none';
+                document.getElementById('listTab').style.display = 'block';
+                loadRecordings();
+            }
+        }
+
+        // File upload handling
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+
+        uploadArea.addEventListener('click', () => {
+            if (event.target !== uploadArea.querySelector('.upload-button')) {
+                fileInput.click();
+            }
+        });
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragging');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragging');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragging');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                uploadFile(files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                uploadFile(e.target.files[0]);
+            }
+        });
+
+        async function uploadFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch(`${API_BASE}/v1/recordings`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    alert(`上传成功!\n录音ID: ${data.recording_id}\n任务ID: ${data.task_id}`);
+                    switchTab('list');
+                    document.querySelector('.tab:nth-child(2)').click();
+                } else {
+                    alert(`上传失败: ${data.error || '未知错误'}`);
+                }
+            } catch (error) {
+                alert(`上传失败: ${error.message}`);
+            }
+        }
+
+        // Load recordings list
+        async function loadRecordings() {
+            const content = document.getElementById('fileListContent');
+            content.innerHTML = '<div style="text-align: center; padding: 40px;"><div class="loading"></div><p style="margin-top: 15px; color: #999;">加载中...</p></div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/v1/recordings?page=${currentPage}&page_size=${pageSize}`);
+                const data = await response.json();
+
+                if (data.recordings && data.recordings.length > 0) {
+                    content.innerHTML = data.recordings.map(rec => renderFileItem(rec)).join('');
+                } else {
+                    content.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-icon">📭</div>
+                            <p>暂无音频文件</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                content.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">⚠️</div>
+                        <p>加载失败: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        function renderFileItem(rec) {
+            const statusClass = `status-${rec.task_status || 'pending'}`;
+            const statusText = {
+                'pending': '等待中',
+                'transcribing': '转写中',
+                'summarizing': '摘要中',
+                'done': '完成',
+                'failed': '失败'
+            }[rec.task_status] || '未知';
+
+            const stages = getStages(rec.task_status);
+            const fileSize = formatFileSize(rec.file_size);
+
+            return `
+                <div class="file-item">
+                    <div class="file-icon">🎵</div>
+                    <div class="file-name" title="${rec.filename}">${rec.filename}</div>
+                    <div class="file-size">${fileSize}</div>
+                    <div class="progress-stages">${stages}</div>
+                    <div><span class="status-badge ${statusClass}">${statusText}</span></div>
+                    <div class="actions">
+                        ${rec.task_status === 'done' ?
+                            `<button class="action-btn view-btn" onclick="viewDetail('${rec.id}')">查看</button>` :
+                            ''}
+                        ${rec.task_status === 'failed' ?
+                            `<button class="action-btn retry-btn" onclick="retryTask('${rec.task_id}')">重试</button>` :
+                            ''}
+                        <button class="action-btn delete-btn" onclick="deleteRecording('${rec.id}')">删除</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function getStages(status) {
+            const stages = [
+                { name: '上传', key: 'upload' },
+                { name: '转写', key: 'transcribe' },
+                { name: '摘要', key: 'summarize' }
+            ];
+
+            const stageMap = {
+                'pending': 0,
+                'transcribing': 1,
+                'summarizing': 2,
+                'done': 3,
+                'failed': -1
+            };
+
+            const currentStage = stageMap[status] || 0;
+
+            return stages.map((stage, index) => {
+                const className = index < currentStage ? 'stage completed' :
+                                index === currentStage ? 'stage active' : 'stage';
+                return `<span class="${className}">${stage.name}</span>`;
+            }).join('');
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        async function viewDetail(recordingId) {
+            try {
+                const response = await fetch(`${API_BASE}/v1/recordings/${recordingId}`);
+                const data = await response.json();
+
+                if (response.ok) {
+                    showDetailModal(data);
+                } else {
+                    alert('获取详情失败');
+                }
+            } catch (error) {
+                alert(`获取详情失败: ${error.message}`);
+            }
+        }
+
+        function showDetailModal(data) {
+            const rec = data.recording;
+            const summary = rec.summary;
+
+            const content = `
+                <div class="detail-section">
+                    <div class="detail-label">文件名</div>
+                    <div class="detail-value">${rec.filename}</div>
+                </div>
+
+                <div class="detail-section">
+                    <div class="detail-label">转写文本</div>
+                    <div class="detail-value">${rec.transcript || '暂无'}</div>
+                </div>
+
+                ${summary ? `
+                    <div class="detail-section">
+                        <div class="summary-item">
+                            <div class="summary-title">📝 摘要</div>
+                            <div class="detail-value">${summary.summary}</div>
+                        </div>
+
+                        <div class="summary-item">
+                            <div class="summary-title">🔑 关键要点</div>
+                            <ul class="key-points">
+                                ${summary.key_points.map(p => `<li>${p}</li>`).join('')}
+                            </ul>
+                        </div>
+
+                        ${summary.todos && summary.todos.length > 0 ? `
+                            <div class="summary-item">
+                                <div class="summary-title">✅ 待办事项</div>
+                                <ul class="key-points">
+                                    ${summary.todos.map(t => `<li>${t}</li>`).join('')}
+                                </ul>
+                            </div>
+                        ` : ''}
+                    </div>
+                ` : ''}
+            `;
+
+            document.getElementById('modalContent').innerHTML = content;
+            document.getElementById('detailModal').classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('detailModal').classList.remove('active');
+        }
+
+        async function deleteRecording(recordingId) {
+            if (!confirm('确定要删除这条录音吗?')) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/v1/recordings/${recordingId}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    alert('删除成功');
+                    loadRecordings();
+                } else {
+                    alert('删除失败');
+                }
+            } catch (error) {
+                alert(`删除失败: ${error.message}`);
+            }
+        }
+
+        async function retryTask(taskId) {
+            try {
+                const response = await fetch(`${API_BASE}/v1/tasks/${taskId}/retry`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    alert('任务已重新加入队列');
+                    loadRecordings();
+                } else {
+                    const data = await response.json();
+                    alert(`重试失败: ${data.error || '未知错误'}`);
+                }
+            } catch (error) {
+                alert(`重试失败: ${error.message}`);
+            }
+        }
+
+        // Auto refresh
+        setInterval(() => {
+            if (document.getElementById('listTab').style.display !== 'none') {
+                loadRecordings();
+            }
+        }, 5000); // Refresh every 5 seconds
+    </script>
+</body>
+</html>
