@@ -1,6 +1,6 @@
 # Audio Transcription Service
 
-一个简化版的录音转写与智能摘要后端服务,支持音频文件上传、异步转写(Mock)和 LLM 智能摘要。
+一个录音转写与智能摘要后端服务,支持音频文件上传、科大讯飞语音识别和 LLM 智能摘要,配备完整的 Web 前端界面。
 
 ## 技术栈
 
@@ -8,7 +8,9 @@
 - **Web 框架**: Gin
 - **数据库**: MySQL 8.0
 - **ORM**: GORM
+- **语音识别**: 科大讯飞语音听写(流式版)
 - **LLM API**: Agnes AI (https://api.agnes-ai.cn)
+- **音频处理**: FFmpeg
 - **异步处理**: Goroutine + Channel
 
 ## 功能特性
@@ -16,8 +18,10 @@
 ### 核心功能 (P0)
 
 - ✅ **音频文件上传** - 支持 wav/mp3/m4a/aac 格式,最大 50MB
-- ✅ **异步转写** - Mock 模拟转写(5-15秒,20%失败率)
+- ✅ **科大讯飞语音识别** - 真实 ASR 服务,支持中文识别
+- ✅ **自动音频格式转换** - FFmpeg 自动转换为 16kHz 单声道 PCM
 - ✅ **LLM 智能摘要** - 调用 Agnes AI 生成结构化摘要
+- ✅ **Web 前端界面** - 拖拽上传、实时进度、结果查看
 - ✅ **任务状态查询** - 实时查看处理进度
 - ✅ **录音列表** - 分页查询,按时间倒序
 - ✅ **任务重试** - 支持失败任务重新处理
@@ -29,9 +33,10 @@
 
 ### 前置要求
 
-- Go 1.26 或更高版本
-- MySQL 8.0 或更高版本
-- Git
+- **Go 1.26+** 或更高版本
+- **MySQL 8.0+** 或更高版本
+- **FFmpeg** - 用于音频格式转换 ⭐**必需**
+- **Git**
 
 ### 1. 克隆仓库
 
@@ -40,7 +45,30 @@ git clone https://github.com/monsterbiter/Audio-Transcription-Service.git
 cd Audio-Transcription-Service
 ```
 
-### 2. 配置数据库
+### 2. 安装 FFmpeg ⭐**重要**
+
+FFmpeg 用于将上传的音频自动转换为科大讯飞要求的格式(16kHz, 单声道, 16bit PCM)。
+
+#### Windows 安装方法:
+
+**方法 1: 使用自动安装脚本 (推荐)**
+```powershell
+.\install-ffmpeg.ps1
+```
+
+**方法 2: 手动下载**
+1. 访问: https://www.gyan.dev/ffmpeg/builds/
+2. 下载: `ffmpeg-release-essentials.zip`
+3. 解压后将 `bin\ffmpeg.exe` 复制到项目根目录
+
+**验证安装:**
+```powershell
+.\ffmpeg.exe -version
+```
+
+如果 FFmpeg 未安装,服务会尝试使用原始音频文件,可能导致转写失败。
+
+### 3. 配置数据库
 
 确保 MySQL 服务已启动,然后执行初始化脚本:
 
@@ -56,7 +84,7 @@ CREATE DATABASE audio_transcription CHARACTER SET utf8mb4 COLLATE utf8mb4_unicod
 
 然后导入 `migrations/init.sql`。
 
-### 3. 配置环境变量(可选)
+### 4. 配置环境变量(可选)
 
 默认配置已内置在代码中,如需修改可设置环境变量:
 
@@ -71,6 +99,11 @@ export DB_NAME=audio_transcription
 # 服务端口
 export SERVER_PORT=8080
 
+# 科大讯飞配置
+export IFLYTEK_APP_ID=your_appid
+export IFLYTEK_API_KEY=your_apikey
+export IFLYTEK_API_SECRET=your_apisecret
+
 # LLM API 配置
 export LLM_BASE_URL=https://api.agnes-ai.cn/v1
 export LLM_API_KEY=your_api_key
@@ -80,13 +113,13 @@ export LLM_MODEL=agnes-25-flash
 export UPLOAD_DIR=./uploads
 ```
 
-### 4. 安装依赖
+### 5. 安装依赖
 
 ```bash
 go mod download
 ```
 
-### 5. 启动服务
+### 6. 启动服务
 
 ```bash
 go run cmd/server/main.go
