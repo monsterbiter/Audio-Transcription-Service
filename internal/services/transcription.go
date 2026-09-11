@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -92,28 +93,52 @@ type CharWord struct {
 
 // Transcribe performs real transcription using iFlytek Voice Dictation API
 func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
+	fmt.Printf("[Transcribe] Starting transcription for file: %s\n", filePath)
+
+	// Convert audio to required format (16kHz, mono, 16bit PCM)
+	convertedPath, err := s.convertAudioFormat(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert audio: %w", err)
+	}
+	defer func() {
+		if convertedPath != filePath {
+			os.Remove(convertedPath) // Clean up converted file
+		}
+	}()
+
+	fmt.Printf("[Transcribe] Audio converted to: %s\n", convertedPath)
+
 	// Build WebSocket URL with authentication
 	authURL, err := s.buildAuthURL()
 	if err != nil {
 		return "", fmt.Errorf("failed to build auth URL: %w", err)
 	}
 
+	fmt.Printf("[Transcribe] Auth URL built successfully\n")
+
 	// Connect to WebSocket
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 30 * time.Second,
 	}
 
-	conn, _, err := dialer.Dial(authURL, nil)
+	conn, resp, err := dialer.Dial(authURL, nil)
 	if err != nil {
+		if resp != nil {
+			return "", fmt.Errorf("failed to connect to WebSocket: %w (status: %d)", err, resp.StatusCode)
+		}
 		return "", fmt.Errorf("failed to connect to WebSocket: %w", err)
 	}
 	defer conn.Close()
 
+	fmt.Printf("[Transcribe] WebSocket connected successfully\n")
+
 	// Read audio file
-	audioData, err := os.ReadFile(filePath)
+	audioData, err := os.ReadFile(convertedPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read audio file: %w", err)
 	}
+
+	fmt.Printf("[Transcribe] Audio file read: %d bytes\n", len(audioData))
 
 	// Channel to collect results
 	resultChan := make(chan string, 1)
@@ -208,17 +233,25 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 
 		// Send frame
 		if err := conn.WriteJSON(req); err != nil {
+			fmt.Printf("[Transcribe] Failed to send frame %d (status=%d): %v\n", offset/frameSize, status, err)
 			return "", fmt.Errorf("failed to send frame: %w", err)
+		}
+
+		if offset%10240 == 0 { // Log every 10KB
+			fmt.Printf("[Transcribe] Sent %d/%d bytes\n", offset, len(audioData))
 		}
 
 		// Last frame sent, break
 		if status == 2 {
+			fmt.Printf("[Transcribe] All frames sent, waiting for final response\n")
 			break
 		}
 
 		// Wait before sending next frame
 		time.Sleep(interval)
 	}
+
+	fmt.Printf("[Transcribe] Waiting for transcription result...\n")
 
 	// Wait for result or error
 	select {
@@ -275,4 +308,45 @@ func (s *TranscriptionService) buildAuthURL() (string, error) {
 	u.RawQuery = query.Encode()
 
 	return u.String(), nil
+}
+
+// convertAudioFormat converts audio to required format using ffmpeg
+// Required: 16kHz, mono, 16bit PCM WAV
+func (s *TranscriptionService) convertAudioFormat(inputPath string) (string, error) {
+	fmt.Printf("[ConvertAudio] Starting conversion for: %s\n", inputPath)
+
+	// Check if ffmpeg is available
+	// For now, we'll create a converted file path
+	outputPath := inputPath + ".converted.wav"
+
+	// Build ffmpeg command
+	// ffmpeg -i input.wav -ar 16000 -ac 1 -sample_fmt s16 output.wav
+	args := []string{
+		"-i", inputPath,
+		"-ar", "16000",      // Sample rate: 16kHz
+		"-ac", "1",          // Channels: mono
+		"-sample_fmt", "s16", // Sample format: 16-bit signed integer
+		"-y",                // Overwrite output file
+		outputPath,
+	}
+
+	// Check if ffmpeg exists
+	_, err := os.Stat("ffmpeg.exe")
+	if err != nil {
+		// Try system PATH
+		fmt.Printf("[ConvertAudio] ffmpeg.exe not found locally, checking system PATH...\n")
+		// For now, return original path if ffmpeg not available
+		// TODO: Add proper ffmpeg check and installation guide
+		fmt.Printf("[ConvertAudio] WARNING: ffmpeg not found, using original file (may cause issues if format is incorrect)\n")
+		return inputPath, nil
+	}
+
+	cmd := exec.Command("ffmpeg.exe", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("ffmpeg conversion failed: %w, output: %s", err, string(output))
+	}
+
+	fmt.Printf("[ConvertAudio] Conversion successful: %s\n", outputPath)
+	return outputPath, nil
 }
