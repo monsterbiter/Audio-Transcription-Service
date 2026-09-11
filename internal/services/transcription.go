@@ -315,33 +315,49 @@ func (s *TranscriptionService) buildAuthURL() (string, error) {
 func (s *TranscriptionService) convertAudioFormat(inputPath string) (string, error) {
 	fmt.Printf("[ConvertAudio] Starting conversion for: %s\n", inputPath)
 
-	// Check if ffmpeg is available
-	// For now, we'll create a converted file path
+	// Output path for converted file
 	outputPath := inputPath + ".converted.wav"
 
 	// Build ffmpeg command
 	// ffmpeg -i input.wav -ar 16000 -ac 1 -sample_fmt s16 output.wav
 	args := []string{
 		"-i", inputPath,
-		"-ar", "16000",      // Sample rate: 16kHz
-		"-ac", "1",          // Channels: mono
+		"-ar", "16000",       // Sample rate: 16kHz
+		"-ac", "1",           // Channels: mono
 		"-sample_fmt", "s16", // Sample format: 16-bit signed integer
-		"-y",                // Overwrite output file
+		"-y",                 // Overwrite output file
 		outputPath,
 	}
 
-	// Check if ffmpeg exists
-	_, err := os.Stat("ffmpeg.exe")
-	if err != nil {
-		// Try system PATH
-		fmt.Printf("[ConvertAudio] ffmpeg.exe not found locally, checking system PATH...\n")
-		// For now, return original path if ffmpeg not available
-		// TODO: Add proper ffmpeg check and installation guide
-		fmt.Printf("[ConvertAudio] WARNING: ffmpeg not found, using original file (may cause issues if format is incorrect)\n")
-		return inputPath, nil
+	// Try to find ffmpeg.exe
+	ffmpegPaths := []string{
+		"./ffmpeg.exe",           // Current directory
+		"ffmpeg.exe",             // PATH
+		"../ffmpeg.exe",          // Parent directory
 	}
 
-	cmd := exec.Command("ffmpeg.exe", args...)
+	var ffmpegPath string
+	for _, path := range ffmpegPaths {
+		if _, err := os.Stat(path); err == nil {
+			ffmpegPath = path
+			fmt.Printf("[ConvertAudio] Found ffmpeg at: %s\n", path)
+			break
+		}
+	}
+
+	if ffmpegPath == "" {
+		// Try system PATH
+		if _, err := exec.LookPath("ffmpeg"); err == nil {
+			ffmpegPath = "ffmpeg"
+			fmt.Printf("[ConvertAudio] Using ffmpeg from system PATH\n")
+		} else {
+			fmt.Printf("[ConvertAudio] WARNING: ffmpeg not found, using original file\n")
+			return inputPath, nil
+		}
+	}
+
+	// Execute ffmpeg
+	cmd := exec.Command(ffmpegPath, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("ffmpeg conversion failed: %w, output: %s", err, string(output))
