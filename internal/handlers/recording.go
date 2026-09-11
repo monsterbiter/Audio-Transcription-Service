@@ -133,7 +133,6 @@ func (h *RecordingHandler) GetRecordings(c *gin.Context) {
 	// Query recordings with latest task
 	var recordings []models.Recording
 	err := database.DB.
-		Preload("Task").
 		Order("created_at DESC").
 		Limit(pageSize).
 		Offset(offset).
