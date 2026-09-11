@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -93,20 +94,21 @@ type CharWord struct {
 
 // Transcribe performs real transcription using iFlytek Voice Dictation API
 func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
-	fmt.Printf("[Transcribe] Starting transcription for file: %s\n", filePath)
+	log.Printf("[Transcribe] Starting transcription for file: %s\n", filePath)
 
 	// Convert audio to required format (16kHz, mono, 16bit PCM)
 	convertedPath, err := s.convertAudioFormat(filePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to convert audio: %w", err)
 	}
-	defer func() {
-		if convertedPath != filePath {
-			os.Remove(convertedPath) // Clean up converted file
-		}
-	}()
+	// Keep converted file for preview instead of deleting
+	// defer func() {
+	// 	if convertedPath != filePath {
+	// 		os.Remove(convertedPath) // Clean up converted file
+	// 	}
+	// }()
 
-	fmt.Printf("[Transcribe] Audio converted to: %s\n", convertedPath)
+	log.Printf("[Transcribe] Audio converted to: %s\n", convertedPath)
 
 	// Build WebSocket URL with authentication
 	authURL, err := s.buildAuthURL()
@@ -114,7 +116,7 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 		return "", fmt.Errorf("failed to build auth URL: %w", err)
 	}
 
-	fmt.Printf("[Transcribe] Auth URL built successfully\n")
+	log.Printf("[Transcribe] Auth URL built successfully\n")
 
 	// Connect to WebSocket
 	dialer := websocket.Dialer{
@@ -130,7 +132,7 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 	}
 	defer conn.Close()
 
-	fmt.Printf("[Transcribe] WebSocket connected successfully\n")
+	log.Printf("[Transcribe] WebSocket connected successfully\n")
 
 	// Read audio file
 	audioData, err := os.ReadFile(convertedPath)
@@ -138,7 +140,7 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 		return "", fmt.Errorf("failed to read audio file: %w", err)
 	}
 
-	fmt.Printf("[Transcribe] Audio file read: %d bytes\n", len(audioData))
+	log.Printf("[Transcribe] Audio file read: %d bytes\n", len(audioData))
 
 	// Channel to collect results
 	resultChan := make(chan string, 1)
@@ -156,16 +158,28 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 			_, message, err := conn.ReadMessage()
 			if err != nil {
 				if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+					log.Printf("[Transcribe] WebSocket closed normally")
+					// Return accumulated transcript when connection closes normally
+					if transcript.Len() > 0 {
+						resultChan <- transcript.String()
+					} else {
+						errorChan <- fmt.Errorf("connection closed with no transcript")
+					}
 					return
 				}
 				errorChan <- fmt.Errorf("failed to read message: %w", err)
 				return
 			}
 
+			log.Printf("[Transcribe] Received message: %s", string(message))
+
 			var resp IFlytekResponse
 			if err := json.Unmarshal(message, &resp); err != nil {
+				log.Printf("[Transcribe] Failed to unmarshal response: %v", err)
 				continue
 			}
+
+			log.Printf("[Transcribe] Response parsed: code=%d, message=%s, data.status=%d", resp.Code, resp.Message, resp.Data.Status)
 
 			if resp.Code != 0 {
 				errorChan <- fmt.Errorf("iFlytek error: code=%d, message=%s, sid=%s", resp.Code, resp.Message, resp.Sid)
@@ -174,6 +188,7 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 
 			// Extract text from word results
 			if resp.Data.Result.Ws != nil {
+				log.Printf("[Transcribe] Got %d word segments", len(resp.Data.Result.Ws))
 				for _, ws := range resp.Data.Result.Ws {
 					for _, cw := range ws.Cw {
 						transcript.WriteString(cw.W)
@@ -183,6 +198,7 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 
 			// Check if this is the last frame (status=2)
 			if resp.Data.Status == 2 {
+				log.Printf("[Transcribe] Received final response, transcript: %s", transcript.String())
 				resultChan <- transcript.String()
 				return
 			}
@@ -233,17 +249,17 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 
 		// Send frame
 		if err := conn.WriteJSON(req); err != nil {
-			fmt.Printf("[Transcribe] Failed to send frame %d (status=%d): %v\n", offset/frameSize, status, err)
+			log.Printf("[Transcribe] Failed to send frame %d (status=%d): %v\n", offset/frameSize, status, err)
 			return "", fmt.Errorf("failed to send frame: %w", err)
 		}
 
 		if offset%10240 == 0 { // Log every 10KB
-			fmt.Printf("[Transcribe] Sent %d/%d bytes\n", offset, len(audioData))
+			log.Printf("[Transcribe] Sent %d/%d bytes\n", offset, len(audioData))
 		}
 
 		// Last frame sent, break
 		if status == 2 {
-			fmt.Printf("[Transcribe] All frames sent, waiting for final response\n")
+			log.Printf("[Transcribe] All frames sent, waiting for final response\n")
 			break
 		}
 
@@ -251,7 +267,7 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 		time.Sleep(interval)
 	}
 
-	fmt.Printf("[Transcribe] Waiting for transcription result...\n")
+	log.Printf("[Transcribe] Waiting for transcription result...\n")
 
 	// Wait for result or error
 	select {
@@ -313,7 +329,7 @@ func (s *TranscriptionService) buildAuthURL() (string, error) {
 // convertAudioFormat converts audio to required format using ffmpeg
 // Required: 16kHz, mono, 16bit PCM WAV
 func (s *TranscriptionService) convertAudioFormat(inputPath string) (string, error) {
-	fmt.Printf("[ConvertAudio] Starting conversion for: %s\n", inputPath)
+	log.Printf("[ConvertAudio] Starting conversion for: %s\n", inputPath)
 
 	// Output path for converted file
 	outputPath := inputPath + ".converted.wav"
@@ -340,7 +356,7 @@ func (s *TranscriptionService) convertAudioFormat(inputPath string) (string, err
 	for _, path := range ffmpegPaths {
 		if _, err := os.Stat(path); err == nil {
 			ffmpegPath = path
-			fmt.Printf("[ConvertAudio] Found ffmpeg at: %s\n", path)
+			log.Printf("[ConvertAudio] Found ffmpeg at: %s\n", path)
 			break
 		}
 	}
@@ -349,9 +365,9 @@ func (s *TranscriptionService) convertAudioFormat(inputPath string) (string, err
 		// Try system PATH
 		if _, err := exec.LookPath("ffmpeg"); err == nil {
 			ffmpegPath = "ffmpeg"
-			fmt.Printf("[ConvertAudio] Using ffmpeg from system PATH\n")
+			log.Printf("[ConvertAudio] Using ffmpeg from system PATH\n")
 		} else {
-			fmt.Printf("[ConvertAudio] WARNING: ffmpeg not found, using original file\n")
+			log.Printf("[ConvertAudio] WARNING: ffmpeg not found, using original file\n")
 			return inputPath, nil
 		}
 	}
@@ -363,6 +379,7 @@ func (s *TranscriptionService) convertAudioFormat(inputPath string) (string, err
 		return "", fmt.Errorf("ffmpeg conversion failed: %w, output: %s", err, string(output))
 	}
 
-	fmt.Printf("[ConvertAudio] Conversion successful: %s\n", outputPath)
+	log.Printf("[ConvertAudio] Conversion successful: %s\n", outputPath)
 	return outputPath, nil
 }
+

@@ -55,7 +55,7 @@ func Load() *Config {
 			Host:     getEnv("DB_HOST", "localhost"),
 			Port:     getEnv("DB_PORT", "3306"),
 			User:     getEnv("DB_USER", "root"),
-			Password: getEnv("DB_PASSWORD", "940588775jia"),
+			Password: getEnv("DB_PASSWORD", ""),
 			DBName:   getEnv("DB_NAME", "audio_transcription"),
 		},
 		Server: ServerConfig{
@@ -63,16 +63,16 @@ func Load() *Config {
 		},
 		LLM: LLMConfig{
 			BaseURL: getEnv("LLM_BASE_URL", "https://api.agnes-ai.cn/v1"),
-			APIKey:  getEnv("LLM_API_KEY", "sk-6zj7FGytFFv1TzeoBpOwrWHZiTru96rhMFoSnNJYBybGfI1J"),
+			APIKey:  getEnv("LLM_API_KEY", ""),
 			Model:   getEnv("LLM_MODEL", "agnes-25-flash"),
 		},
 		Storage: StorageConfig{
 			UploadDir: getEnv("UPLOAD_DIR", "./uploads"),
 		},
 		IFlytek: IFlytekConfig{
-			AppID:     getEnv("IFLYTEK_APP_ID", "bebd7457"),
-			APIKey:    getEnv("IFLYTEK_API_KEY", "2d4238e31a345e50d120eecb8c830b9e"),
-			APISecret: getEnv("IFLYTEK_API_SECRET", "OGI5OGY3YzE2ZWE3OTZhNWQxMWExOTc1"),
+			AppID:     getEnv("IFLYTEK_APP_ID", ""),
+			APIKey:    getEnv("IFLYTEK_API_KEY", ""),
+			APISecret: getEnv("IFLYTEK_API_SECRET", ""),
 			WSURL:     getEnv("IFLYTEK_WS_URL", "wss://iat-api.xfyun.cn/v2/iat"),
 		},
 	}

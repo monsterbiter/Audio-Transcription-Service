@@ -667,6 +667,14 @@
                 </div>
 
                 <div class="detail-section">
+                    <div class="detail-label">音频预览</div>
+                    <audio controls style="width: 100%; margin-top: 10px;">
+                        <source src="/${rec.file_path}" type="audio/wav">
+                        您的浏览器不支持音频播放
+                    </audio>
+                </div>
+
+                <div class="detail-section">
                     <div class="detail-label">转写文本</div>
                     <div class="detail-value">${rec.transcript || '暂无'}</div>
                 </div>

@@ -75,6 +75,7 @@ func main() {
 
 	// Serve static files
 	router.Static("/web", "./web")
+	router.Static("/uploads", "./uploads") // Serve audio files for preview
 	router.GET("/", func(c *gin.Context) {
 		c.Redirect(http.StatusMovedPermanently, "/web/index.html")
 	})

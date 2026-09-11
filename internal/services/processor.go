@@ -117,14 +117,21 @@ func (p *ProcessorService) processTask(taskID string) {
 	summary, err := p.summarizationSvc.Summarize(transcript)
 	if err != nil {
 		log.Printf("Task %s summarization failed: %v", taskID, err)
-		p.failTask(&task, "summarization failed: "+err.Error())
+		// Don't fail the entire task, just mark as done without summary
+		log.Printf("Task %s completed with transcription only (no summary)", taskID)
+		if err := p.updateTaskStatus(&task, models.TaskStatusDone, "completed without summary"); err != nil {
+			log.Printf("Failed to update task status: %v", err)
+		}
 		return
 	}
 
 	// Save summary
 	if err := database.DB.Model(&models.Recording{}).Where("id = ?", task.RecordingID).Update("summary", summary).Error; err != nil {
 		log.Printf("Failed to save summary: %v", err)
-		p.failTask(&task, "failed to save summary")
+		// Still mark as done since transcription succeeded
+		if err := p.updateTaskStatus(&task, models.TaskStatusDone, "completed without summary"); err != nil {
+			log.Printf("Failed to update task status: %v", err)
+		}
 		return
 	}
 
