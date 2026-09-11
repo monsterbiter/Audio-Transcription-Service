@@ -1,0 +1,28 @@
+### Health Check
+GET http://localhost:8080/health
+
+### Upload Recording
+POST http://localhost:8080/v1/recordings
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
+
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="test.mp3"
+Content-Type: audio/mpeg
+
+< ./test-audio.mp3
+------WebKitFormBoundary7MA4YWxkTrZu0gW--
+
+### Get Task Status
+GET http://localhost:8080/v1/tasks/{{task_id}}
+
+### Get Recordings List
+GET http://localhost:8080/v1/recordings?page=1&page_size=10
+
+### Get Recording Detail
+GET http://localhost:8080/v1/recordings/{{recording_id}}
+
+### Retry Failed Task
+POST http://localhost:8080/v1/tasks/{{task_id}}/retry
+
+### Delete Recording
+DELETE http://localhost:8080/v1/recordings/{{recording_id}}
