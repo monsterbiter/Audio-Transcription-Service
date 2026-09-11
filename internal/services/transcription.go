@@ -15,7 +15,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// TranscriptionService handles audio transcription using iFlytek ASR
+// TranscriptionService handles audio transcription using iFlytek ASR (Voice Dictation API)
 type TranscriptionService struct {
 	appID     string
 	apiKey    string
@@ -33,86 +33,64 @@ func NewTranscriptionService(appID, apiKey, apiSecret, wsURL string) *Transcript
 	}
 }
 
-// IFlytekRequest represents the request structure for iFlytek ASR
+// IFlytekRequest represents the request structure for iFlytek Voice Dictation API
 type IFlytekRequest struct {
-	Header    IFlytekHeader    `json:"header"`
-	Parameter IFlytekParameter `json:"parameter,omitempty"`
-	Payload   IFlytekPayload   `json:"payload"`
+	Common   CommonParams   `json:"common"`
+	Business BusinessParams `json:"business"`
+	Data     DataParams     `json:"data"`
 }
 
-type IFlytekHeader struct {
-	AppID  string `json:"app_id"`
-	Status int    `json:"status"` // 0:首帧 1:中间帧 2:最后一帧
+type CommonParams struct {
+	AppID string `json:"app_id"`
 }
 
-type IFlytekParameter struct {
-	IAT IATParameter `json:"iat"`
+type BusinessParams struct {
+	Language string `json:"language"`
+	Domain   string `json:"domain"`
+	Accent   string `json:"accent"`
+	Vad_eos  int    `json:"vad_eos,omitempty"`
+	Dwa      string `json:"dwa,omitempty"`
 }
 
-type IATParameter struct {
-	Domain   string       `json:"domain"`
-	Language string       `json:"language"`
-	Accent   string       `json:"accent"`
-	EOS      int          `json:"eos,omitempty"`
-	DWA      string       `json:"dwa,omitempty"`
-	Result   ResultConfig `json:"result"`
-}
-
-type ResultConfig struct {
-	Encoding string `json:"encoding"`
-	Compress string `json:"compress"`
+type DataParams struct {
+	Status   int    `json:"status"`
 	Format   string `json:"format"`
-}
-
-type IFlytekPayload struct {
-	Audio AudioData `json:"audio"`
-}
-
-type AudioData struct {
-	Encoding   string `json:"encoding"`
-	SampleRate int    `json:"sample_rate"`
-	Channels   int    `json:"channels"`
-	BitDepth   int    `json:"bit_depth"`
-	Seq        int    `json:"seq"`
-	Status     int    `json:"status"`
-	Audio      string `json:"audio"`
+	Encoding string `json:"encoding"`
+	Audio    string `json:"audio"`
 }
 
 // IFlytekResponse represents the response structure
 type IFlytekResponse struct {
-	Header  ResponseHeader  `json:"header"`
-	Payload ResponsePayload `json:"payload"`
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Sid     string          `json:"sid"`
+	Data    ResponseData    `json:"data"`
 }
 
-type ResponseHeader struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	SID     string `json:"sid"`
-	Status  int    `json:"status"`
+type ResponseData struct {
+	Result ResultInfo `json:"result"`
+	Status int        `json:"status"`
 }
 
-type ResponsePayload struct {
-	Result ResultData `json:"result"`
-}
-
-type ResultData struct {
-	Text string `json:"text"`
-}
-
-// TextResult represents the decoded text result
-type TextResult struct {
-	SN int          `json:"sn"`
-	LS bool         `json:"ls"`
-	WS []WordResult `json:"ws"`
+type ResultInfo struct {
+	Sn  int          `json:"sn"`
+	Ls  bool         `json:"ls"`
+	Bg  int          `json:"bg"`
+	Ed  int          `json:"ed"`
+	Ws  []WordResult `json:"ws"`
 }
 
 type WordResult struct {
-	CW []struct {
-		W string `json:"w"`
-	} `json:"cw"`
+	Bg int        `json:"bg"`
+	Cw []CharWord `json:"cw"`
 }
 
-// Transcribe performs real transcription using iFlytek ASR API
+type CharWord struct {
+	W  string `json:"w"`
+	Wp string `json:"wp"`
+}
+
+// Transcribe performs real transcription using iFlytek Voice Dictation API
 func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 	// Build WebSocket URL with authentication
 	authURL, err := s.buildAuthURL()
@@ -138,7 +116,7 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 	}
 
 	// Channel to collect results
-	resultChan := make(chan string, 100)
+	resultChan := make(chan string, 1)
 	errorChan := make(chan error, 1)
 	doneChan := make(chan bool, 1)
 
@@ -164,33 +142,22 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 				continue
 			}
 
-			if resp.Header.Code != 0 {
-				errorChan <- fmt.Errorf("iFlytek error: code=%d, message=%s", resp.Header.Code, resp.Header.Message)
+			if resp.Code != 0 {
+				errorChan <- fmt.Errorf("iFlytek error: code=%d, message=%s, sid=%s", resp.Code, resp.Message, resp.Sid)
 				return
 			}
 
-			// Decode text result
-			if resp.Payload.Result.Text != "" {
-				textData, err := base64.StdEncoding.DecodeString(resp.Payload.Result.Text)
-				if err != nil {
-					continue
-				}
-
-				var textResult TextResult
-				if err := json.Unmarshal(textData, &textResult); err != nil {
-					continue
-				}
-
-				// Extract text from word results
-				for _, ws := range textResult.WS {
-					for _, cw := range ws.CW {
+			// Extract text from word results
+			if resp.Data.Result.Ws != nil {
+				for _, ws := range resp.Data.Result.Ws {
+					for _, cw := range ws.Cw {
 						transcript.WriteString(cw.W)
 					}
 				}
 			}
 
-			// Check if this is the last frame
-			if resp.Header.Status == 2 {
+			// Check if this is the last frame (status=2)
+			if resp.Data.Status == 2 {
 				resultChan <- transcript.String()
 				return
 			}
@@ -198,61 +165,45 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 	}()
 
 	// Send audio data in chunks
-	frameSize := 1280 // bytes per frame
+	frameSize := 1280 // bytes per frame (8k: 1280, 16k: 1280)
 	interval := 40 * time.Millisecond
-	seq := 0
 
-	for offset := 0; offset < len(audioData) || offset == 0; offset += frameSize {
+	for offset := 0; offset <= len(audioData); offset += frameSize {
 		var status int
 		var audioChunk []byte
 
 		if offset == 0 {
 			status = 0 // First frame
-		} else if offset+frameSize >= len(audioData) {
-			status = 2 // Last frame
-			if offset < len(audioData) {
-				audioChunk = audioData[offset:]
-			}
+		} else if offset >= len(audioData) {
+			status = 2 // Last frame (empty audio)
+			audioChunk = []byte{}
 		} else {
 			status = 1 // Middle frame
-			audioChunk = audioData[offset : offset+frameSize]
+			end := offset + frameSize
+			if end > len(audioData) {
+				end = len(audioData)
+			}
+			audioChunk = audioData[offset:end]
 		}
 
 		// Build request
 		req := IFlytekRequest{
-			Header: IFlytekHeader{
-				AppID:  s.appID,
-				Status: status,
+			Common: CommonParams{
+				AppID: s.appID,
 			},
-			Payload: IFlytekPayload{
-				Audio: AudioData{
-					Encoding:   "raw",
-					SampleRate: 16000,
-					Channels:   1,
-					BitDepth:   16,
-					Seq:        seq,
-					Status:     status,
-					Audio:      base64.StdEncoding.EncodeToString(audioChunk),
-				},
+			Business: BusinessParams{
+				Language: "zh_cn",
+				Domain:   "iat",
+				Accent:   "mandarin",
+				Vad_eos:  5000,
+				Dwa:      "wpgs",
 			},
-		}
-
-		// Add parameter only in first frame
-		if status == 0 {
-			req.Parameter = IFlytekParameter{
-				IAT: IATParameter{
-					Domain:   "slm",
-					Language: "zh_cn",
-					Accent:   "mandarin",
-					EOS:      6000,
-					DWA:      "wpgs",
-					Result: ResultConfig{
-						Encoding: "utf8",
-						Compress: "raw",
-						Format:   "json",
-					},
-				},
-			}
+			Data: DataParams{
+				Status:   status,
+				Format:   "audio/L16;rate=16000",
+				Encoding: "raw",
+				Audio:    base64.StdEncoding.EncodeToString(audioChunk),
+			},
 		}
 
 		// Send frame
@@ -260,9 +211,7 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 			return "", fmt.Errorf("failed to send frame: %w", err)
 		}
 
-		seq++
-
-		// Last frame, break
+		// Last frame sent, break
 		if status == 2 {
 			break
 		}
@@ -287,7 +236,7 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 	}
 }
 
-// buildAuthURL builds the authenticated WebSocket URL
+// buildAuthURL builds the authenticated WebSocket URL for Voice Dictation API
 func (s *TranscriptionService) buildAuthURL() (string, error) {
 	// Parse base URL
 	u, err := url.Parse(s.wsURL)
@@ -296,18 +245,19 @@ func (s *TranscriptionService) buildAuthURL() (string, error) {
 	}
 
 	// Generate RFC1123 date
-	date := time.Now().UTC().Format(http.TimeFormat)
+	now := time.Now().UTC()
+	date := now.Format(http.TimeFormat)
 
-	// Build signature origin
+	// Build signature origin string
 	signatureOrigin := fmt.Sprintf("host: %s\ndate: %s\nGET %s HTTP/1.1",
 		u.Host, date, u.Path)
 
-	// Calculate HMAC-SHA256
+	// Calculate HMAC-SHA256 signature
 	h := hmac.New(sha256.New, []byte(s.apiSecret))
 	h.Write([]byte(signatureOrigin))
 	signature := base64.StdEncoding.EncodeToString(h.Sum(nil))
 
-	// Build authorization origin
+	// Build authorization origin string
 	authorizationOrigin := fmt.Sprintf(
 		`api_key="%s", algorithm="hmac-sha256", headers="host date request-line", signature="%s"`,
 		s.apiKey, signature)
@@ -325,12 +275,4 @@ func (s *TranscriptionService) buildAuthURL() (string, error) {
 	u.RawQuery = query.Encode()
 
 	return u.String(), nil
-}
-
-// ConvertToWAV converts audio file to PCM WAV format (if needed)
-// For now, we assume the uploaded file is already in compatible format
-func (s *TranscriptionService) ConvertToWAV(inputPath string) (string, error) {
-	// TODO: Implement audio conversion if needed using ffmpeg
-	// For now, return the original path
-	return inputPath, nil
 }

@@ -73,7 +73,7 @@ func Load() *Config {
 			AppID:     getEnv("IFLYTEK_APP_ID", "bebd7457"),
 			APIKey:    getEnv("IFLYTEK_API_KEY", "2d4238e31a345e50d120eecb8c830b9e"),
 			APISecret: getEnv("IFLYTEK_API_SECRET", "OGI5OGY3YzE2ZWE3OTZhNWQxMWExOTc1"),
-			WSURL:     getEnv("IFLYTEK_WS_URL", "wss://iat.xf-yun.com/v1"),
+			WSURL:     getEnv("IFLYTEK_WS_URL", "wss://iat-api.xfyun.cn/v2/iat"),
 		},
 	}
 }
