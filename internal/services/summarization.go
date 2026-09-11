@@ -142,5 +142,5 @@ func extractJSON(content string) string {
 		content = content[:end]
 	}
 
-	return bytes.TrimSpace([]byte(content))
+	return string(bytes.TrimSpace([]byte(content)))
 }

@@ -2,7 +2,6 @@ package database
 
 import (
 	"audio-transcription-service/internal/config"
-	"audio-transcription-service/internal/models"
 	"fmt"
 	"log"
 
