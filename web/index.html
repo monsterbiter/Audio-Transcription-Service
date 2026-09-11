@@ -418,8 +418,8 @@
         <header>
             <h1>🎙️ 音频转写服务</h1>
             <div class="tabs">
-                <button class="tab active" onclick="switchTab('upload')">音频上传</button>
-                <button class="tab" onclick="switchTab('list')">音频列表</button>
+                <button class="tab active" onclick="switchTab('upload', this)">音频上传</button>
+                <button class="tab" onclick="switchTab('list', this)">音频列表</button>
             </div>
         </header>
 
@@ -477,9 +477,9 @@
         const pageSize = 20;
 
         // Tab switching
-        function switchTab(tab) {
+        function switchTab(tab, element) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            event.target.classList.add('active');
+            if (element) element.classList.add('active');
 
             if (tab === 'upload') {
                 document.getElementById('uploadTab').style.display = 'block';
@@ -495,8 +495,8 @@
         const uploadArea = document.getElementById('uploadArea');
         const fileInput = document.getElementById('fileInput');
 
-        uploadArea.addEventListener('click', () => {
-            if (event.target !== uploadArea.querySelector('.upload-button')) {
+        uploadArea.addEventListener('click', (e) => {
+            if (e.target !== uploadArea.querySelector('.upload-button')) {
                 fileInput.click();
             }
         });
@@ -539,8 +539,8 @@
 
                 if (response.ok) {
                     alert(`上传成功!\n录音ID: ${data.recording_id}\n任务ID: ${data.task_id}`);
-                    switchTab('list');
-                    document.querySelector('.tab:nth-child(2)').click();
+                    const listTab = document.querySelector('.tab:nth-child(2)');
+                    switchTab('list', listTab);
                 } else {
                     alert(`上传失败: ${data.error || '未知错误'}`);
                 }
