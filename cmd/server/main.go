@@ -33,7 +33,12 @@ func main() {
 
 	// Initialize services
 	storageService := services.NewStorageService(cfg.Storage.UploadDir)
-	transcriptionService := services.NewTranscriptionService()
+	transcriptionService := services.NewTranscriptionService(
+		cfg.IFlytek.AppID,
+		cfg.IFlytek.APIKey,
+		cfg.IFlytek.APISecret,
+		cfg.IFlytek.WSURL,
+	)
 	summarizationService := services.NewSummarizationService(
 		cfg.LLM.BaseURL,
 		cfg.LLM.APIKey,
