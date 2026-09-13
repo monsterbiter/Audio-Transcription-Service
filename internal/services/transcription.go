@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -296,7 +295,7 @@ func (s *TranscriptionService) transcribeSingleFile(filePath string) (string, er
 // transcribeWithChunks splits audio into chunks, transcribes in parallel, concatenates results
 func (s *TranscriptionService) transcribeWithChunks(filePath string) (string, error) {
 	// Create temp directory for chunks
-	tempDir, err := ioutil.TempDir("", "audio-chunks-*")
+	tempDir, err := os.MkdirTemp("", "audio-chunks-*")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp dir: %w", err)
 	}
