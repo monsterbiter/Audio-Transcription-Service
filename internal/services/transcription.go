@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -26,6 +28,11 @@ type TranscriptionService struct {
 	apiSecret string
 	wsURL     string
 }
+
+const (
+	// maxAudioSize is the threshold for chunked processing (10MB)
+	maxAudioSize = 10 * 1024 * 1024
+)
 
 // NewTranscriptionService creates a new transcription service
 func NewTranscriptionService(appID, apiKey, apiSecret, wsURL string) *TranscriptionService {
@@ -94,7 +101,7 @@ type CharWord struct {
 	Wp string `json:"wp"`
 }
 
-// Transcribe performs real transcription using iFlytek Voice Dictation API
+// Transcribe performs audio transcription, automatically chunking large files
 func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 	log.Printf("[Transcribe] Starting transcription for file: %s\n", filePath)
 
@@ -103,15 +110,33 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to convert audio: %w", err)
 	}
-	// Keep converted file for preview instead of deleting
-	// defer func() {
-	// 	if convertedPath != filePath {
-	// 		os.Remove(convertedPath) // Clean up converted file
-	// 	}
-	// }()
+	defer func() {
+		if convertedPath != filePath {
+			os.Remove(convertedPath)
+		}
+	}()
 
 	log.Printf("[Transcribe] Audio converted to: %s\n", convertedPath)
 
+	// Check file size
+	fileInfo, err := os.Stat(convertedPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to stat converted file: %w", err)
+	}
+
+	// Small files: direct transcription
+	if fileInfo.Size() <= maxAudioSize {
+		log.Printf("[Transcribe] File size %d bytes <= threshold, using direct transcription\n", fileInfo.Size())
+		return s.transcribeSingleFile(convertedPath)
+	}
+
+	// Large files: chunked transcription
+	log.Printf("[Transcribe] File size %d bytes > threshold, using chunked transcription\n", fileInfo.Size())
+	return s.transcribeWithChunks(convertedPath)
+}
+
+// transcribeSingleFile performs transcription on a single audio file via WebSocket
+func (s *TranscriptionService) transcribeSingleFile(filePath string) (string, error) {
 	// Build WebSocket URL with authentication
 	authURL, err := s.buildAuthURL()
 	if err != nil {
@@ -137,7 +162,7 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 	log.Printf("[Transcribe] WebSocket connected successfully\n")
 
 	// Read audio file
-	audioData, err := os.ReadFile(convertedPath)
+	audioData, err := os.ReadFile(filePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read audio file: %w", err)
 	}
@@ -160,28 +185,16 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 			_, message, err := conn.ReadMessage()
 			if err != nil {
 				if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-					log.Printf("[Transcribe] WebSocket closed normally")
-					// Return accumulated transcript when connection closes normally
-					if transcript.Len() > 0 {
-						resultChan <- transcript.String()
-					} else {
-						errorChan <- fmt.Errorf("connection closed with no transcript")
-					}
 					return
 				}
 				errorChan <- fmt.Errorf("failed to read message: %w", err)
 				return
 			}
 
-			log.Printf("[Transcribe] Received message: %s", string(message))
-
 			var resp IFlytekResponse
 			if err := json.Unmarshal(message, &resp); err != nil {
-				log.Printf("[Transcribe] Failed to unmarshal response: %v", err)
 				continue
 			}
-
-			log.Printf("[Transcribe] Response parsed: code=%d, message=%s, data.status=%d", resp.Code, resp.Message, resp.Data.Status)
 
 			if resp.Code != 0 {
 				errorChan <- fmt.Errorf("iFlytek error: code=%d, message=%s, sid=%s", resp.Code, resp.Message, resp.Sid)
@@ -190,7 +203,6 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 
 			// Extract text from word results
 			if resp.Data.Result.Ws != nil {
-				log.Printf("[Transcribe] Got %d word segments", len(resp.Data.Result.Ws))
 				for _, ws := range resp.Data.Result.Ws {
 					for _, cw := range ws.Cw {
 						transcript.WriteString(cw.W)
@@ -200,7 +212,6 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 
 			// Check if this is the last frame (status=2)
 			if resp.Data.Status == 2 {
-				log.Printf("[Transcribe] Received final response, transcript: %s", transcript.String())
 				resultChan <- transcript.String()
 				return
 			}
@@ -208,7 +219,7 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 	}()
 
 	// Send audio data in chunks
-	frameSize := 1280 // bytes per frame (8k: 1280, 16k: 1280)
+	frameSize := 1280
 	interval := 40 * time.Millisecond
 
 	for offset := 0; offset <= len(audioData); offset += frameSize {
@@ -216,12 +227,12 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 		var audioChunk []byte
 
 		if offset == 0 {
-			status = 0 // First frame
+			status = 0
 		} else if offset >= len(audioData) {
-			status = 2 // Last frame (empty audio)
+			status = 2
 			audioChunk = []byte{}
 		} else {
-			status = 1 // Middle frame
+			status = 1
 			end := offset + frameSize
 			if end > len(audioData) {
 				end = len(audioData)
@@ -229,7 +240,6 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 			audioChunk = audioData[offset:end]
 		}
 
-		// Build request
 		req := IFlytekRequest{
 			Common: CommonParams{
 				AppID: s.appID,
@@ -249,29 +259,25 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 			},
 		}
 
-		// Send frame
 		if err := conn.WriteJSON(req); err != nil {
 			log.Printf("[Transcribe] Failed to send frame %d (status=%d): %v\n", offset/frameSize, status, err)
 			return "", fmt.Errorf("failed to send frame: %w", err)
 		}
 
-		if offset%10240 == 0 { // Log every 10KB
+		if offset%10240 == 0 {
 			log.Printf("[Transcribe] Sent %d/%d bytes\n", offset, len(audioData))
 		}
 
-		// Last frame sent, break
 		if status == 2 {
 			log.Printf("[Transcribe] All frames sent, waiting for final response\n")
 			break
 		}
 
-		// Wait before sending next frame
 		time.Sleep(interval)
 	}
 
 	log.Printf("[Transcribe] Waiting for transcription result...\n")
 
-	// Wait for result or error
 	select {
 	case result := <-resultChan:
 		<-doneChan
@@ -285,6 +291,88 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 	case <-time.After(90 * time.Second):
 		return "", fmt.Errorf("transcription timeout")
 	}
+}
+
+// transcribeWithChunks splits audio into chunks, transcribes in parallel, concatenates results
+func (s *TranscriptionService) transcribeWithChunks(filePath string) (string, error) {
+	// Create temp directory for chunks
+	tempDir, err := ioutil.TempDir("", "audio-chunks-*")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	log.Printf("[Chunked] Created temp directory: %s\n", tempDir)
+
+	// Split audio into chunks
+	chunkPaths, err := s.splitAudioIntoChunks(filePath, tempDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to split audio: %w", err)
+	}
+
+	log.Printf("[Chunked] Starting parallel transcription of %d chunks\n", len(chunkPaths))
+
+	// Transcribe chunks in parallel
+	type chunkResult struct {
+		index int
+		text  string
+		err   error
+	}
+
+	resultsChan := make(chan chunkResult, len(chunkPaths))
+	var wg sync.WaitGroup
+
+	for i, chunkPath := range chunkPaths {
+		wg.Add(1)
+		go func(index int, path string) {
+			defer wg.Done()
+
+			log.Printf("[Chunked] Transcribing chunk %d/%d: %s\n", index+1, len(chunkPaths), filepath.Base(path))
+			text, err := s.transcribeSingleFile(path)
+
+			resultsChan <- chunkResult{
+				index: index,
+				text:  text,
+				err:   err,
+			}
+		}(i, chunkPath)
+	}
+
+	// Wait for all goroutines
+	wg.Wait()
+	close(resultsChan)
+
+	// Collect and sort results
+	results := make([]chunkResult, 0, len(chunkPaths))
+	for result := range resultsChan {
+		results = append(results, result)
+	}
+
+	// Check for errors
+	var errors []string
+	for _, result := range results {
+		if result.err != nil {
+			errors = append(errors, fmt.Sprintf("chunk %d: %v", result.index, result.err))
+		}
+	}
+
+	if len(errors) > 0 {
+		return "", fmt.Errorf("chunk transcription errors: %s", strings.Join(errors, "; "))
+	}
+
+	// Sort by index to maintain order
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].index < results[j].index
+	})
+
+	// Concatenate transcripts
+	var finalTranscript strings.Builder
+	for _, result := range results {
+		finalTranscript.WriteString(result.text)
+	}
+
+	log.Printf("[Chunked] All chunks transcribed successfully, total length: %d characters\n", finalTranscript.Len())
+	return finalTranscript.String(), nil
 }
 
 // buildAuthURL builds the authenticated WebSocket URL for Voice Dictation API
