@@ -20,12 +20,16 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// progressFunc is the progress callback type
+type progressFunc func(current, total int)
+
 // TranscriptionService handles audio transcription using iFlytek ASR (Voice Dictation API)
 type TranscriptionService struct {
-	appID     string
-	apiKey    string
-	apiSecret string
-	wsURL     string
+	appID          string
+	apiKey         string
+	apiSecret      string
+	wsURL          string
+	updateProgress progressFunc
 }
 
 const (
@@ -34,12 +38,20 @@ const (
 )
 
 // NewTranscriptionService creates a new transcription service
-func NewTranscriptionService(appID, apiKey, apiSecret, wsURL string) *TranscriptionService {
+func NewTranscriptionService(appID, apiKey, apiSecret, wsURL string, updateProgress progressFunc) *TranscriptionService {
 	return &TranscriptionService{
-		appID:     appID,
-		apiKey:    apiKey,
-		apiSecret: apiSecret,
-		wsURL:     wsURL,
+		appID:          appID,
+		apiKey:         apiKey,
+		apiSecret:      apiSecret,
+		wsURL:          wsURL,
+		updateProgress: updateProgress,
+	}
+}
+
+// reportProgress calls the progress callback with the given values
+func (s *TranscriptionService) reportProgress(current, total int) {
+	if s.updateProgress != nil {
+		s.updateProgress(current, total)
 	}
 }
 
@@ -328,6 +340,8 @@ func (s *TranscriptionService) transcribeWithChunks(filePath string) (string, er
 
 			log.Printf("[Chunked] Transcribing chunk %d/%d: %s\n", index+1, len(chunkPaths), filepath.Base(path))
 			text, err := s.transcribeSingleFile(path)
+			log.Printf("[Chunked] Chunk %d/%d completed\n", index+1, len(chunkPaths))
+			s.reportProgress(index+1, len(chunkPaths))
 
 			resultsChan <- chunkResult{
 				index: index,

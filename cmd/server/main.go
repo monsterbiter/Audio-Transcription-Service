@@ -38,6 +38,7 @@ func main() {
 		cfg.IFlytek.APIKey,
 		cfg.IFlytek.APISecret,
 		cfg.IFlytek.WSURL,
+		nil, // progress callback - will be set in handler if needed
 	)
 	summarizationService := services.NewSummarizationService(
 		cfg.LLM.BaseURL,
