@@ -113,7 +113,7 @@ type CharWord struct {
 }
 
 // Transcribe performs audio transcription, automatically chunking large files
-func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
+func (s *TranscriptionService) Transcribe(filePath string, cb progressFunc) (string, error) {
 	log.Printf("[Transcribe] Starting transcription for file: %s\n", filePath)
 
 	// Convert audio to required format (16kHz, mono, 16bit PCM)
@@ -143,7 +143,7 @@ func (s *TranscriptionService) Transcribe(filePath string) (string, error) {
 
 	// Large files: chunked transcription
 	log.Printf("[Transcribe] File size %d bytes > threshold, using chunked transcription\n", fileInfo.Size())
-	return s.transcribeWithChunks(convertedPath)
+	return s.transcribeWithChunks(convertedPath, cb)
 }
 
 // transcribeSingleFile performs transcription on a single audio file via WebSocket
@@ -305,7 +305,7 @@ func (s *TranscriptionService) transcribeSingleFile(filePath string) (string, er
 }
 
 // transcribeWithChunks splits audio into chunks, transcribes in parallel, concatenates results
-func (s *TranscriptionService) transcribeWithChunks(filePath string) (string, error) {
+func (s *TranscriptionService) transcribeWithChunks(filePath string, cb progressFunc) (string, error) {
 	// Create temp directory for chunks
 	tempDir, err := os.MkdirTemp("", "audio-chunks-*")
 	if err != nil {
@@ -341,7 +341,11 @@ func (s *TranscriptionService) transcribeWithChunks(filePath string) (string, er
 			log.Printf("[Chunked] Transcribing chunk %d/%d: %s\n", index+1, len(chunkPaths), filepath.Base(path))
 			text, err := s.transcribeSingleFile(path)
 			log.Printf("[Chunked] Chunk %d/%d completed\n", index+1, len(chunkPaths))
-			s.reportProgress(index+1, len(chunkPaths))
+			if cb != nil {
+				cb(index+1, len(chunkPaths))
+			} else {
+				s.reportProgress(index+1, len(chunkPaths))
+			}
 
 			resultsChan <- chunkResult{
 				index: index,

@@ -3,6 +3,7 @@ package services
 import (
 	"audio-transcription-service/internal/database"
 	"audio-transcription-service/internal/models"
+	"fmt"
 	"log"
 	"sync"
 )
@@ -92,7 +93,12 @@ func (p *ProcessorService) processTask(taskID string) {
 		return
 	}
 
-	transcript, err := p.transcriptionSvc.Transcribe(task.Recording.FilePath)
+	transcript, err := p.transcriptionSvc.Transcribe(task.Recording.FilePath, func(current, total int) {
+		stage := fmt.Sprintf("transcribing (%d/%d)", current, total)
+		if err := database.GetDB().Model(&models.Task{}).Where("id = ?", task.ID).Update("current_stage", stage).Error; err != nil {
+			log.Printf("Failed to update task progress: %v", err)
+		}
+	})
 	if err != nil {
 		log.Printf("Task %s transcription failed: %v", taskID, err)
 		p.failTask(&task, "transcription failed: "+err.Error())
