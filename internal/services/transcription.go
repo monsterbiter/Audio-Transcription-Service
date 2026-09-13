@@ -329,8 +329,7 @@ func (s *TranscriptionService) buildAuthURL() (string, error) {
 }
 
 // findFFmpeg locates the ffmpeg executable.
-// It checks project-relative locations first (ffmpeg.exe lives in the repo root
-// on this machine and is NOT on the system PATH), then falls back to PATH.
+// It checks project-relative locations first, then falls back to PATH.
 func (s *TranscriptionService) findFFmpeg() (string, error) {
 	candidates := []string{
 		"./ffmpeg.exe",
@@ -394,6 +393,11 @@ func (s *TranscriptionService) convertAudioFormat(inputPath string) (string, err
 func (s *TranscriptionService) splitAudioIntoChunks(inputPath, tempDir string) ([]string, error) {
 	log.Printf("[Split] Splitting audio: %s into %s\n", inputPath, tempDir)
 
+	// Validate input file exists
+	if _, err := os.Stat(inputPath); err != nil {
+		return nil, fmt.Errorf("input file does not exist: %w", err)
+	}
+
 	ffmpegPath, err := s.findFFmpeg()
 	if err != nil {
 		return nil, fmt.Errorf("cannot split audio: %w", err)
@@ -402,14 +406,16 @@ func (s *TranscriptionService) splitAudioIntoChunks(inputPath, tempDir string) (
 	// FFmpeg command: split into 60-second segments
 	// -f segment: use segment muxer
 	// -segment_time 60: 60 seconds per segment
-	// -c copy: copy codec without re-encoding (fast)
+	// Encode to WAV format (16kHz, mono, 16bit) to match convertAudioFormat settings
 	outputPattern := filepath.Join(tempDir, "chunk_%03d.wav")
 
 	cmd := exec.Command(ffmpegPath,
 		"-i", inputPath,
 		"-f", "segment",
 		"-segment_time", "60",
-		"-c", "copy",
+		"-ar", "16000",       // Sample rate: 16kHz
+		"-ac", "1",           // Channels: mono
+		"-sample_fmt", "s16", // Sample format: 16-bit signed integer
 		outputPattern,
 	)
 
