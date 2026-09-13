@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -326,6 +328,32 @@ func (s *TranscriptionService) buildAuthURL() (string, error) {
 	return u.String(), nil
 }
 
+// findFFmpeg locates the ffmpeg executable.
+// It checks project-relative locations first (ffmpeg.exe lives in the repo root
+// on this machine and is NOT on the system PATH), then falls back to PATH.
+func (s *TranscriptionService) findFFmpeg() (string, error) {
+	candidates := []string{
+		"./ffmpeg.exe",
+		"ffmpeg.exe",
+		"../ffmpeg.exe",
+	}
+
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			log.Printf("[FFmpeg] Found ffmpeg at: %s\n", candidate)
+			return candidate, nil
+		}
+	}
+
+	// Fall back to system PATH
+	if path, err := exec.LookPath("ffmpeg"); err == nil {
+		log.Printf("[FFmpeg] Using ffmpeg from system PATH: %s\n", path)
+		return path, nil
+	}
+
+	return "", fmt.Errorf("ffmpeg not found: checked ./ffmpeg.exe, ffmpeg.exe, ../ffmpeg.exe, and system PATH")
+}
+
 // convertAudioFormat converts audio to required format using ffmpeg
 // Required: 16kHz, mono, 16bit PCM WAV
 func (s *TranscriptionService) convertAudioFormat(inputPath string) (string, error) {
@@ -345,31 +373,9 @@ func (s *TranscriptionService) convertAudioFormat(inputPath string) (string, err
 		outputPath,
 	}
 
-	// Try to find ffmpeg.exe
-	ffmpegPaths := []string{
-		"./ffmpeg.exe",           // Current directory
-		"ffmpeg.exe",             // PATH
-		"../ffmpeg.exe",          // Parent directory
-	}
-
-	var ffmpegPath string
-	for _, path := range ffmpegPaths {
-		if _, err := os.Stat(path); err == nil {
-			ffmpegPath = path
-			log.Printf("[ConvertAudio] Found ffmpeg at: %s\n", path)
-			break
-		}
-	}
-
-	if ffmpegPath == "" {
-		// Try system PATH
-		if _, err := exec.LookPath("ffmpeg"); err == nil {
-			ffmpegPath = "ffmpeg"
-			log.Printf("[ConvertAudio] Using ffmpeg from system PATH\n")
-		} else {
-			log.Printf("[ConvertAudio] WARNING: ffmpeg not found, using original file\n")
-			return inputPath, nil
-		}
+	ffmpegPath, err := s.findFFmpeg()
+	if err != nil {
+		return "", fmt.Errorf("cannot convert audio: %w", err)
 	}
 
 	// Execute ffmpeg
@@ -381,5 +387,52 @@ func (s *TranscriptionService) convertAudioFormat(inputPath string) (string, err
 
 	log.Printf("[ConvertAudio] Conversion successful: %s\n", outputPath)
 	return outputPath, nil
+}
+
+// splitAudioIntoChunks splits an audio file into 60-second chunks using FFmpeg.
+// Returns chunk paths sorted in playback order.
+func (s *TranscriptionService) splitAudioIntoChunks(inputPath, tempDir string) ([]string, error) {
+	log.Printf("[Split] Splitting audio: %s into %s\n", inputPath, tempDir)
+
+	ffmpegPath, err := s.findFFmpeg()
+	if err != nil {
+		return nil, fmt.Errorf("cannot split audio: %w", err)
+	}
+
+	// FFmpeg command: split into 60-second segments
+	// -f segment: use segment muxer
+	// -segment_time 60: 60 seconds per segment
+	// -c copy: copy codec without re-encoding (fast)
+	outputPattern := filepath.Join(tempDir, "chunk_%03d.wav")
+
+	cmd := exec.Command(ffmpegPath,
+		"-i", inputPath,
+		"-f", "segment",
+		"-segment_time", "60",
+		"-c", "copy",
+		outputPattern,
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("ffmpeg split failed: %w, output: %s", err, string(output))
+	}
+
+	// Find all generated chunk files
+	pattern := filepath.Join(tempDir, "chunk_*.wav")
+	chunks, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find chunks: %w", err)
+	}
+
+	if len(chunks) == 0 {
+		return nil, fmt.Errorf("no chunks generated")
+	}
+
+	// Sort chunks by name to guarantee playback order
+	sort.Strings(chunks)
+
+	log.Printf("[Split] Generated %d chunks\n", len(chunks))
+	return chunks, nil
 }
 
