@@ -17,7 +17,7 @@ import (
 )
 
 func main() {
-	// Load configuration
+	// Load configuration (reads from environment variables or defaults)
 	cfg := config.Load()
 	log.Printf("Starting Audio Transcription Service on port %s", cfg.Server.Port)
 
