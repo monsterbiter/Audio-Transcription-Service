@@ -64,7 +64,7 @@ func Load() *Config {
 		LLM: LLMConfig{
 			BaseURL: getEnv("LLM_BASE_URL", "https://api.agnes-ai.cn/v1"),
 			APIKey:  getEnv("LLM_API_KEY", ""),
-			Model:   getEnv("LLM_MODEL", "agnes-25-flash"),
+			Model:   getEnv("LLM_MODEL", "agnes-2.5-flash"),
 		},
 		Storage: StorageConfig{
 			UploadDir: getEnv("UPLOAD_DIR", "./uploads"),

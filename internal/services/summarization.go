@@ -32,7 +32,7 @@ func NewSummarizationService(baseURL, apiKey, model string) *SummarizationServic
 
 // Summarize generates structured summary from transcript using LLM
 func (s *SummarizationService) Summarize(transcript string) (*models.Summary, error) {
-	prompt := fmt.Sprintf(`请对以下录音转写文本生成结构化摘要,严格按照以下JSON格式返回,不要包含其他内容:
+	prompt := fmt.Sprintf(`这里是由听写大模型产生的内容，字数有很多冗余，你需要从中提取出完整的话并进行总结，请对以下录音转写文本生成结构化摘要,严格按照以下JSON格式返回,不要包含其他内容:
 {
   "summary": "一句话总结录音内容(20字以内)",
   "key_points": ["要点1", "要点2", "要点3"],

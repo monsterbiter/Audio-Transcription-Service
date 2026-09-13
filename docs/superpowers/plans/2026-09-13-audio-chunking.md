@@ -27,75 +27,133 @@
 - None (all changes are modifications to existing files)
 
 ### Modified Files
-- `internal/services/transcription.go` - Add chunking, parallel processing, retry logic
-- `internal/services/processor.go` - Add progress callback support
+- `internal/services/transcription.go` - Add chunking, parallel processing, retry logic, ffmpeg path helper
+- `internal/services/processor.go` - Add progress callback support and GORM-based stage updates
 
 ---
 
-### Task 1: Add Audio Splitting Function
+### Task 1: Add FFmpeg Path Helper and Audio Splitting Function
 
 **Files:**
-- Modify: `internal/services/transcription.go:95-271`
-- Test: Manual testing (unit tests added in Task 5)
+- Modify: `internal/services/transcription.go` (imports, new functions, refactor `convertAudioFormat`)
 
 **Interfaces:**
 - Consumes: `TranscriptionService` struct (existing)
-- Produces: `splitAudioIntoChunks(inputPath, tempDir string) ([]string, error)` - returns list of chunk file paths
+- Produces:
+  - `findFFmpeg() (string, error)` - locates the ffmpeg executable, returns its path
+  - `splitAudioIntoChunks(inputPath, tempDir string) ([]string, error)` - returns sorted list of chunk file paths
 
-- [ ] **Step 1: Add import for path/filepath**
+- [ ] **Step 1: Add imports for path/filepath, math, and sort**
 
-Add to imports section at top of file:
+Add to the imports block at the top of the file (alongside the existing `os/exec`, `strings`, `time` entries):
 
 ```go
-"path/filepath"
 "math"
+"path/filepath"
+"sort"
 ```
 
-- [ ] **Step 2: Write splitAudioIntoChunks function**
+- [ ] **Step 2: Write findFFmpeg helper function**
 
-Add after the `Transcribe` function (around line 271):
+The existing `convertAudioFormat` already searches several locations for `ffmpeg.exe`. Extract that lookup into a reusable helper so audio splitting uses the same resolution. Add this function immediately before `convertAudioFormat`:
 
 ```go
-// splitAudioIntoChunks splits audio file into 60-second chunks using FFmpeg
+// findFFmpeg locates the ffmpeg executable.
+// It checks project-relative locations first (ffmpeg.exe lives in the repo root
+// on this machine and is NOT on the system PATH), then falls back to PATH.
+func (s *TranscriptionService) findFFmpeg() (string, error) {
+	candidates := []string{
+		"./ffmpeg.exe",
+		"ffmpeg.exe",
+		"../ffmpeg.exe",
+	}
+
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			log.Printf("[FFmpeg] Found ffmpeg at: %s\n", candidate)
+			return candidate, nil
+		}
+	}
+
+	// Fall back to system PATH
+	if path, err := exec.LookPath("ffmpeg"); err == nil {
+		log.Printf("[FFmpeg] Using ffmpeg from system PATH: %s\n", path)
+		return path, nil
+	}
+
+	return "", fmt.Errorf("ffmpeg not found: checked ./ffmpeg.exe, ffmpeg.exe, ../ffmpeg.exe, and system PATH")
+}
+```
+
+- [ ] **Step 3: Refactor convertAudioFormat to use findFFmpeg**
+
+In `convertAudioFormat`, replace the inline lookup block (the `ffmpegPaths` slice, the `for` loop over it, and the `if ffmpegPath == ""` fallback that returns `inputPath`) with a call to the helper:
+
+```go
+	ffmpegPath, err := s.findFFmpeg()
+	if err != nil {
+		return "", fmt.Errorf("cannot convert audio: %w", err)
+	}
+```
+
+Leave the rest of `convertAudioFormat` (the `args` slice, `exec.Command(ffmpegPath, args...)`, and the success log) unchanged.
+
+Note: this changes behavior deliberately. Previously a missing ffmpeg silently returned the unconverted input path, which sent the wrong audio format to iFlytek and produced confusing downstream failures. Now it returns a clear error.
+
+- [ ] **Step 4: Write splitAudioIntoChunks function**
+
+Add after `convertAudioFormat`:
+
+```go
+// splitAudioIntoChunks splits an audio file into 60-second chunks using FFmpeg.
+// Returns chunk paths sorted in playback order.
 func (s *TranscriptionService) splitAudioIntoChunks(inputPath, tempDir string) ([]string, error) {
 	log.Printf("[Split] Splitting audio: %s into %s\n", inputPath, tempDir)
-	
+
+	ffmpegPath, err := s.findFFmpeg()
+	if err != nil {
+		return nil, fmt.Errorf("cannot split audio: %w", err)
+	}
+
 	// FFmpeg command: split into 60-second segments
 	// -f segment: use segment muxer
 	// -segment_time 60: 60 seconds per segment
 	// -c copy: copy codec without re-encoding (fast)
 	outputPattern := filepath.Join(tempDir, "chunk_%03d.wav")
-	
-	cmd := exec.Command("ffmpeg",
+
+	cmd := exec.Command(ffmpegPath,
 		"-i", inputPath,
 		"-f", "segment",
 		"-segment_time", "60",
 		"-c", "copy",
 		outputPattern,
 	)
-	
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("ffmpeg split failed: %w, output: %s", err, string(output))
 	}
-	
+
 	// Find all generated chunk files
 	pattern := filepath.Join(tempDir, "chunk_*.wav")
 	chunks, err := filepath.Glob(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find chunks: %w", err)
 	}
-	
+
 	if len(chunks) == 0 {
 		return nil, fmt.Errorf("no chunks generated")
 	}
-	
+
+	// Sort chunks by name to guarantee playback order
+	sort.Strings(chunks)
+
 	log.Printf("[Split] Generated %d chunks\n", len(chunks))
 	return chunks, nil
 }
 ```
 
-- [ ] **Step 3: Build and verify no compilation errors**
+- [ ] **Step 5: Build and verify no compilation errors**
 
 Run:
 ```bash
@@ -105,15 +163,28 @@ go build ./...
 
 Expected: BUILD SUCCESS (no errors)
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Build and verify no compilation errors**
+
+Run:
+```bash
+cd "e:/github/Audio Transcription Service"
+go build ./...
+```
+
+Expected: BUILD SUCCESS (no errors)
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add internal/services/transcription.go
-git commit -m "feat: add audio splitting function using FFmpeg
+git commit -m "feat: add ffmpeg path helper and audio splitting
 
+- Add findFFmpeg() to locate ffmpeg.exe (project root + PATH fallback)
+- Refactor convertAudioFormat() to use findFFmpeg() helper
 - Add splitAudioIntoChunks() to split audio into 60s segments
 - Use FFmpeg segment muxer for fast splitting without re-encoding
-- Return list of chunk file paths for downstream processing
+- Sort chunks to guarantee playback order
+- Return clear error if ffmpeg not found (was silent fallback before)
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
@@ -563,23 +634,18 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ### Task 5: Update Processor to Pass Progress Callback
 
 **Files:**
-- Modify: `internal/services/processor.go:78-120`
+- Modify: `internal/services/processor.go`
 
 **Interfaces:**
 - Consumes: `Transcribe(filePath string, onProgress func(int, int)) (string, error)`
-- Produces: Updated `processTask` that updates task.current_stage with progress
+- Produces: Updated `processTask` that updates task.current_stage with progress using GORM
 
-- [ ] **Step 1: Add helper function to update task stage**
+- [ ] **Step 1: Add import for fmt if not already present**
 
-Add after the `processTask` function (around line 120):
+Check imports at top of file, add if missing:
 
 ```go
-// updateTaskStage updates the current_stage field of a task
-func (p *ProcessorService) updateTaskStage(taskID, stage string) {
-	if err := database.UpdateTaskStage(taskID, stage); err != nil {
-		log.Printf("Failed to update task stage: %v", err)
-	}
-}
+"fmt"
 ```
 
 - [ ] **Step 2: Find and update the transcription call in processTask**
@@ -590,80 +656,11 @@ Find the line that calls `p.transcriptionSvc.Transcribe(...)` in the `processTas
 // Transcribe with progress callback
 transcript, err := p.transcriptionSvc.Transcribe(task.Recording.FilePath, func(current, total int) {
 	stage := fmt.Sprintf("transcribing (%d/%d)", current, total)
-	p.updateTaskStage(task.ID, stage)
-})
-```
-
-- [ ] **Step 3: Add import for fmt if not already present**
-
-Check imports at top of file, add if missing:
-
-```go
-"fmt"
-```
-
-- [ ] **Step 4: Build and verify no compilation errors**
-
-Run:
-```bash
-go build ./...
-```
-
-Expected: BUILD SUCCESS (may fail if database.UpdateTaskStage doesn't exist - that's expected, we'll add it next)
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add internal/services/processor.go
-git commit -m "feat: add progress callback to transcription
-
-- Update processTask to pass progress callback to Transcribe()
-- Add updateTaskStage() helper for updating task.current_stage
-- Display real-time progress like 'transcribing (3/10)'
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
-```
-
----
-
-### Task 6: Add Database Function for Updating Task Stage
-
-**Files:**
-- Modify: `internal/database/tasks.go`
-
-**Interfaces:**
-- Consumes: None (database function)
-- Produces: `UpdateTaskStage(taskID, stage string) error`
-
-- [ ] **Step 1: Read existing tasks.go to understand structure**
-
-Run:
-```bash
-cat "e:/github/Audio Transcription Service/internal/database/tasks.go"
-```
-
-Expected: See existing database functions
-
-- [ ] **Step 2: Add UpdateTaskStage function**
-
-Add at the end of `internal/database/tasks.go`:
-
-```go
-// UpdateTaskStage updates the current_stage field of a task
-func UpdateTaskStage(taskID, stage string) error {
-	query := `
-		UPDATE tasks 
-		SET current_stage = ?, updated_at = NOW()
-		WHERE id = ?
-	`
-	
-	_, err := db.Exec(query, stage, taskID)
-	if err != nil {
-		return fmt.Errorf("failed to update task stage: %w", err)
+	// Update current_stage using GORM
+	if err := database.GetDB().Model(&models.Task{}).Where("id = ?", task.ID).Update("current_stage", stage).Error; err != nil {
+		log.Printf("Failed to update task stage: %v", err)
 	}
-	
-	return nil
-}
+})
 ```
 
 - [ ] **Step 3: Build and verify no compilation errors**
@@ -678,19 +675,19 @@ Expected: BUILD SUCCESS
 - [ ] **Step 4: Commit**
 
 ```bash
-git add internal/database/tasks.go
-git commit -m "feat: add UpdateTaskStage database function
+git add internal/services/processor.go
+git commit -m "feat: add progress callback to transcription
 
-- Add UpdateTaskStage() to update task.current_stage field
-- Used by processor to report chunk transcription progress
-- Updates updated_at timestamp automatically
+- Update processTask to pass progress callback to Transcribe()
+- Use GORM to update task.current_stage with real-time progress
+- Display progress like 'transcribing (3/10)'
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 7: Integration Testing
+### Task 6: Integration Testing
 
 **Files:**
 - Test: Full system integration test with real audio file
@@ -822,9 +819,9 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - ✅ Audio splitting (60s chunks): Task 1
 - ✅ Parallel processing (3 workers): Task 4
 - ✅ Retry logic (3 attempts, exponential backoff): Task 3
-- ✅ Progress tracking: Task 5, 6
+- ✅ Progress tracking: Task 5 (GORM-based)
 - ✅ Temp file cleanup: Task 4 (defer statements)
-- ✅ Integration testing: Task 7
+- ✅ Integration testing: Task 6
 
 ### Placeholder Scan
 - ✅ No TBD/TODO markers
@@ -833,16 +830,18 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - ✅ No "similar to Task N" references
 
 ### Type Consistency
+- ✅ `findFFmpeg() (string, error)` - defined in Task 1, used in Task 1
 - ✅ `splitAudioIntoChunks(inputPath, tempDir string) ([]string, error)` - defined in Task 1, used in Task 4
 - ✅ `transcribeChunk(chunkPath string) (string, error)` - defined in Task 2, used in Task 3
 - ✅ `transcribeChunkWithRetry(chunkPath string, maxRetries int) (string, error)` - defined in Task 3, used in Task 4
 - ✅ `Transcribe(filePath string, onProgress func(int, int)) (string, error)` - defined in Task 4, used in Task 5
-- ✅ `UpdateTaskStage(taskID, stage string) error` - defined in Task 6, used in Task 5
 
 ### Interface Consistency
 - ✅ All function signatures match between definition and usage
 - ✅ All types (chunkJob, chunkResult) defined before use
 - ✅ Progress callback signature consistent: `func(int, int)`
+- ✅ Database layer uses GORM (project convention)
+- ✅ FFmpeg path resolution reuses existing pattern
 
 ---
 
@@ -853,3 +852,4 @@ All tasks are fully specified with:
 - Build verification steps
 - Commit messages
 - No placeholders or TODOs
+- Adjustments for project conventions (GORM, ffmpeg path lookup)
