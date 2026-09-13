@@ -33,8 +33,8 @@ type TranscriptionService struct {
 }
 
 const (
-	// maxAudioSize is the threshold for chunked processing (10MB)
-	maxAudioSize = 10 * 1024 * 1024
+	// maxAudioSize is the threshold for chunked processing (1MB)
+	maxAudioSize = 1 * 1024 * 1024
 )
 
 // NewTranscriptionService creates a new transcription service
